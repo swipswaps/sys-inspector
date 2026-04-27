@@ -1,0 +1,8 @@
+[Unit]
+Description=Sys-Inspector Service Manifest Generator
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/share/sys-inspector/src/collectors/service-manifest.sh
+StandardOutput=journal
+StandardError=journal

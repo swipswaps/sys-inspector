@@ -1,0 +1,14 @@
+[Unit]
+Description=Sys-Inspector Boot Health Capture
+After=multi-user.target
+Wants=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/share/sys-inspector/src/collectors/boot-health.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

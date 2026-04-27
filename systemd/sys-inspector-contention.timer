@@ -1,0 +1,11 @@
+[Unit]
+Description=Sys-Inspector Contention Check Timer (every 5 min)
+
+[Timer]
+OnBootSec=120s
+OnUnitActiveSec=300s
+AccuracySec=10s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

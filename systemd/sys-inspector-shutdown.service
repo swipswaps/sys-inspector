@@ -1,0 +1,15 @@
+[Unit]
+Description=Sys-Inspector Shutdown Capture
+DefaultDependencies=no
+Before=shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/share/sys-inspector/src/collectors/shutdown-capture.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=shutdown.target

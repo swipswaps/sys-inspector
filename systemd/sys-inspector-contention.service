@@ -1,0 +1,8 @@
+[Unit]
+Description=Sys-Inspector Resource Contention Sampler
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/share/sys-inspector/src/collectors/contention-alert.sh
+StandardOutput=journal
+StandardError=journal

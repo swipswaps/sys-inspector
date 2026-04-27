@@ -1,0 +1,5 @@
+# Python dependencies for sys-inspector API server
+# Install: pip3 install -r requirements.txt
+
+flask>=3.0              # REST API framework (fallback: Python http.server if missing)
+dbus-python>=1.3        # Optional: desktop notifications from contention alerter

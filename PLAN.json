@@ -1,0 +1,97 @@
+{
+  "project": "sys-inspector",
+  "version": "1.0.0",
+  "description": "Self-healing Linux system transparency suite with TUI, SQLite logging, and Vite+d3.js dashboard",
+  "architecture": {
+    "collectors": {
+      "boot_health": {
+        "file": "src/collectors/boot-health.sh",
+        "trigger": "systemd service at boot",
+        "purpose": "Capture boot metrics, compare against baseline, flag regressions",
+        "citation": "systemd.unit(5) man page — After=multi-user.target ensures filesystems are mounted before collection 【Tier 2†man7.org】"
+      },
+      "contention_alert": {
+        "file": "src/collectors/contention-alert.sh",
+        "trigger": "systemd timer every 5 minutes",
+        "purpose": "Alert on CPU>90%, RAM>80%, IOWait>50%, zombie processes",
+        "citation": "Zhang et al. 2026, 'Recursive Language Models', MIT CSAIL — treat system state as external environment to observe 【Tier 1†arXiv:2512.24601v2】"
+      },
+      "shutdown_capture": {
+        "file": "src/collectors/shutdown-capture.sh",
+        "trigger": "systemd service at shutdown",
+        "purpose": "Log running processes, mount states, open files before halt",
+        "citation": "systemd.service(5) — Conflicts=shutdown.target ensures execution before system halt 【Tier 2†man7.org】"
+      },
+      "service_manifest": {
+        "file": "src/collectors/service-manifest.sh",
+        "trigger": "manual or weekly timer",
+        "purpose": "Document every masked/enabled service with rationale",
+        "citation": "systemctl(1) — list-unit-files provides canonical service state enumeration 【Tier 2†man7.org】"
+      }
+    },
+    "database": {
+      "engine": "SQLite 3.x",
+      "schema": "src/db/schema.sql",
+      "init": "src/db/db-init.sh",
+      "query": "src/db/db-query.sh",
+      "citation": "SQLite Documentation — 'SQLite is a C-language library that implements a small, fast, self-contained, high-reliability, full-featured, SQL database engine' 【Tier 2†sqlite.org】"
+    },
+    "tui": {
+      "file": "src/tui/sys-inspector-tui.sh",
+      "backend": "dialog(1) or whiptail(1)",
+      "features": ["boot health view", "resource monitor", "service audit", "error explainer", "database query"],
+      "citation": "dialog(1) man page — 'Dialog is a program that will let you to present a variety of questions or display messages using dialog boxes' 【Tier 2†man7.org】"
+    },
+    "api": {
+      "file": "src/api/api-server.py",
+      "framework": "Python Flask (or built-in http.server fallback)",
+      "endpoints": ["/api/boot", "/api/resources", "/api/services", "/api/errors", "/api/health"],
+      "citation": "Flask Documentation — 'Flask is a lightweight WSGI web application framework' 【Tier 2†palletsprojects.com】"
+    },
+    "dashboard": {
+      "bundler": "Vite 6.x",
+      "framework": "React 19.x",
+      "visualization": "d3.js 7.x",
+      "components": ["BootTimeline", "ResourceGauge", "ServiceAuditTable", "ErrorTimeline", "HealthSummary"],
+      "citation": "Bostock et al., 'D3: Data-Driven Documents', IEEE Trans. Visualization & Comp. Graphics, 2011 — 'D3 enables direct inspection and manipulation of the native representation: the document object model' 【Tier 1†d3js.org】"
+    }
+  },
+  "self_healing_principles": {
+    "idempotent_schema": "CREATE TABLE IF NOT EXISTS — safe to re-run",
+    "graceful_degradation": "All collectors check for dependencies; skip with warning if missing",
+    "log_rotation": "Database cleaned via retention policy (90 days default)",
+    "baseline_comparison": "Boot health script flags regressions >2σ from stored baseline",
+    "auto_recovery": "systemd Restart=on-failure with 5s delay on all timers"
+  },
+  "dependencies": {
+    "runtime": ["bash>=5.0", "sqlite3>=3.35", "dialog>=1.3", "python3>=3.11", "systemd>=254"],
+    "dashboard_build": ["node>=20", "npm>=10"],
+    "optional": ["btop", "netdata", "grafana"]
+  },
+  "files": [
+    "README.md",
+    "PLAN.json",
+    "LICENSE",
+    "src/collectors/boot-health.sh",
+    "src/collectors/contention-alert.sh",
+    "src/collectors/shutdown-capture.sh",
+    "src/collectors/service-manifest.sh",
+    "src/db/schema.sql",
+    "src/db/db-init.sh",
+    "src/db/db-query.sh",
+    "src/tui/sys-inspector-tui.sh",
+    "src/api/api-server.py",
+    "src/api/requirements.txt",
+    "dashboard/dashboard.html",
+    "config/sys-inspector.conf",
+    "scripts/install.sh",
+    "scripts/uninstall.sh",
+    "scripts/check-deps.sh",
+    "systemd/sys-inspector-boot.service",
+    "systemd/sys-inspector-contention.timer",
+    "systemd/sys-inspector-contention.service",
+    "systemd/sys-inspector-shutdown.service",
+    "systemd/sys-inspector-manifest.service",
+    "systemd/sys-inspector-manifest.timer"
+  ]
+}

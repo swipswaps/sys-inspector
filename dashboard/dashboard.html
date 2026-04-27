@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sys-Inspector Dashboard</title>
+<!-- d3.js v7 loaded from CDN — no build step required -->
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         margin: 2rem; background: #f5f5f5; color: #333; }
+  h1 { color: #2c3e50; }
+  .chart { background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+           margin-bottom: 2rem; padding: 1.5rem; }
+  .chart h2 { margin-top: 0; color: #2c3e50; font-size: 1.2rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  th { background: #2c3e50; color: white; }
+  th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+  tr:nth-child(even) { background: #f9f9f9; }
+  ul { list-style: none; padding: 0; }
+  li { padding: 8px; border-bottom: 1px solid #eee; font-family: monospace; font-size: 0.85rem; }
+  .gauge-container { display: flex; gap: 2rem; flex-wrap: wrap; }
+  .gauge { background: #f0f0f0; border-radius: 8px; padding: 1rem; min-width: 150px; text-align: center; }
+  .gauge .value { font-size: 2rem; font-weight: bold; color: #2c3e50; }
+  .gauge .label { font-size: 0.85rem; color: #666; margin-top: 0.5rem; }
+</style>
+</head>
+<body>
+<h1>📊 Sys-Inspector Dashboard</h1>
+
+<!-- Boot Timeline -->
+<div class="chart" id="boot-timeline">
+  <h2>Boot Timeline (seconds, last 10 boots)</h2>
+  <svg id="boot-svg"></svg>
+</div>
+
+<!-- Resource Gauges -->
+<div class="chart" id="resource-gauges">
+  <h2>Current Resources (auto-refreshes every 30s)</h2>
+  <div class="gauge-container" id="gauges">
+    <div class="gauge"><div class="value" id="cpu-val">--</div><div class="label">CPU %</div></div>
+    <div class="gauge"><div class="value" id="mem-val">--</div><div class="label">Memory Used</div></div>
+    <div class="gauge"><div class="value" id="io-val">--</div><div class="label">I/O Wait %</div></div>
+  </div>
+</div>
+
+<!-- Service Audit -->
+<div class="chart" id="service-table">
+  <h2>Service States</h2>
+  <table id="service-tbl"><thead><tr><th>Unit</th><th>State</th><th>Rationale</th></tr></thead><tbody></tbody></table>
+</div>
+
+<!-- Error Log -->
+<div class="chart" id="error-log">
+  <h2>Active Errors</h2>
+  <ul id="error-list"><li>Loading...</li></ul>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Configuration — API server must be running on this host/port
+// ---------------------------------------------------------------------------
+const API = 'http://localhost:8765/api';
+
+// ---------------------------------------------------------------------------
+// Data fetching — all endpoints fetched in parallel
+// ---------------------------------------------------------------------------
+async function fetchData() {
+  const [bootRes, resRes, svcRes, errRes] = await Promise.all([
+    fetch(`${API}/boot`).then(r => r.json()).catch(() => []),
+    fetch(`${API}/resources`).then(r => r.json()).catch(() => []),
+    fetch(`${API}/services`).then(r => r.json()).catch(() => []),
+    fetch(`${API}/errors`).then(r => r.json()).catch(() => [])
+  ]);
+  return {boot: Array.isArray(bootRes)?bootRes:[],
+          resources: Array.isArray(resRes)?resRes:[],
+          services: Array.isArray(svcRes)?svcRes:[],
+          errors: Array.isArray(errRes)?errRes:[]};
+}
+
+// ---------------------------------------------------------------------------
+// Boot Timeline — horizontal bar chart of total boot time
+// ---------------------------------------------------------------------------
+function drawBootTimeline(data) {
+  const svg = d3.select("#boot-svg");
+  svg.selectAll("*").remove();
+  if (!data || !data.length) { svg.append("text").text("No boot data yet.").attr("x",10).attr("y",20); return; }
+
+  const margin = {top:20, right:20, bottom:50, left:60},
+        width = 600 - margin.left - margin.right,
+        height = 300 - margin.top - margin.bottom;
+  svg.attr("width", width + margin.left + margin.right)
+     .attr("height", height + margin.top + margin.bottom);
+  const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+  // Take last 10 boots, reverse chronologically
+  const recent = data.slice(-10).reverse();
+  const x = d3.scaleBand().domain(recent.map((_,i) => i+1)).range([0, width]).padding(0.2);
+  const y = d3.scaleLinear().domain([0, d3.max(recent, d => d.total_ms/1000) || 1]).range([height, 0]);
+
+  g.append("g").call(d3.axisLeft(y).tickFormat(d => d+"s"));
+  g.append("g").attr("transform", `translate(0,${height})`).call(d3.axisBottom(x));
+  g.selectAll("rect").data(recent).enter().append("rect")
+    .attr("x", (_,i) => x(i+1))
+    .attr("y", d => y(d.total_ms/1000))
+    .attr("width", x.bandwidth())
+    .attr("height", d => height - y(d.total_ms/1000))
+    .attr("fill", d => d.baseline_dev > 2 ? "#e74c3c" : "#3498db")
+    .append("title").text(d => `Boot: ${(d.total_ms/1000).toFixed(1)}s\nDeviation: ${d.baseline_dev}σ`);
+}
+
+// ---------------------------------------------------------------------------
+// Resource Gauges — update text values from latest sample
+// ---------------------------------------------------------------------------
+function drawGauges(data) {
+  if (!data || !data.length) return;
+  const last = data[data.length-1];
+  document.getElementById("cpu-val").textContent = `${last.cpu_pct}%`;
+  document.getElementById("mem-val").textContent = `${last.mem_used_mb} MB`;
+  document.getElementById("io-val").textContent = `${last.iowait_pct}%`;
+}
+
+// ---------------------------------------------------------------------------
+// Service Audit Table — populate from API data
+// ---------------------------------------------------------------------------
+function drawServiceTable(data) {
+  const tbody = d3.select("#service-tbl tbody");
+  tbody.html("");
+  if (!data || !data.length) { tbody.append("tr").append("td").attr("colspan",3).text("No data."); return; }
+  data.forEach(d => {
+    const row = tbody.append("tr");
+    row.append("td").text(d.unit_name);
+    row.append("td").text(d.state);
+    row.append("td").text(d.rationale || "");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Error Log — list of unresolved warnings
+// ---------------------------------------------------------------------------
+function drawErrorList(data) {
+  const ul = d3.select("#error-list");
+  ul.html("");
+  if (!data || !data.length) { ul.append("li").text("No active errors."); return; }
+  data.forEach(d => {
+    ul.append("li").text(`[${d.source}] ${d.message} (${d.count}×)`);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Main refresh loop
+// ---------------------------------------------------------------------------
+async function refresh() {
+  const {boot, resources, services, errors} = await fetchData();
+  drawBootTimeline(boot);
+  drawGauges(resources);
+  drawServiceTable(services);
+  drawErrorList(errors);
+}
+
+refresh();
+setInterval(refresh, 30000);  // auto-refresh every 30 seconds
+</script>
+</body>
+</html>
