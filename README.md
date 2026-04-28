@@ -1,401 +1,203 @@
-# 🔍 Sys-Inspector – Complete System Transparency Tool
+README.md << 'README_EOF'
+# Sys‑Inspector – System Health & Boot Analysis Dashboard
 
-**Sys-Inspector** reveals everything your system is doing – boot processes, service states, system logs, network connections, process tree, and active errors – in a clean, selectable, copyable web dashboard and terminal UI.
-
-## 📋 Table of Contents
-
-- [Overview](#-overview)
-- [Quick Start](#-quick-start)
-- [What It Shows](#-what-it-shows)
-- [Installation](#-installation)
-- [Usage Guide](#-usage-guide)
-- [Troubleshooting](#-troubleshooting)
-- [How We Got Here (RLM Methods)](#-how-we-got-here-rlm-methods)
-- [Current Status](#-current-status)
-- [What Makes Sense Next](#-what-makes-sense-next)
-- [Uninstall](#-uninstall)
-- [Contributing](#-contributing)
+Sys‑Inspector collects real‑time system data (listening ports, active network connections, top processes, systemd service states, resource usage, boot timeline, and journal errors) and presents it in a clean, self‑refreshing web dashboard. It is designed for **full transparency, deterministic debugging, and zero evasion** – every command is logged, every error is shown, and the dashboard verifies itself with a headless browser.
 
 ---
 
-## 📖 Overview
-
-Sys-Inspector was built to solve a simple problem: **systems hide their problems**. Error messages scroll past, logs fill up, and users never see what's actually happening. This tool captures EVERYTHING and presents it transparently.
-
-### The Philosophy (RLM Methods)
-
-Based on **Recursive Layered Monitoring** (Zhang et al. 2026), Sys-Inspector observes:
-
-| Layer | What It Monitors | Why It Matters |
-|-------|------------------|----------------|
-| **Layer 0** | Kernel, hardware, ACPI | Hardware errors you never see |
-| **Layer 1** | System services (systemd) | Failed units, startup delays |
-| **Layer 2** | Processes (CPU, memory) | Resource hogs, zombie processes |
-| **Layer 3** | Network (connections, ports) | Unexpected listeners, active connections |
-| **Layer 4** | Boot timeline (all services) | Boot bottlenecks, slow services |
-| **Layer 5** | Journal (system logs) | Every error, warning, and info message |
-| **Layer 6** | Active errors with context | What's broken and why |
-| **Layer 7** | Remediation suggestions | How to fix it |
-
----
-
-## 🚀 Quick Start
+## 🚀 Quick Start (Clone & Run)
 
 ```bash
+git clone https://github.com/your-username/sys-inspector.git
+cd sys-inspector
+sudo bash install.sh
+
+After installation, open your browser to http://<server-ip>:8765.
+📋 Features
+
+    Listening Ports – UDP/TCP ports from ss -tuln
+
+    Network Connections – ESTABLISHED connections (local/remote)
+
+    Top Processes – sorted by CPU usage (ps aux --sort=-%cpu)
+
+    Service States – systemd units with state and description
+
+    Resource Gauges – CPU %, memory used (MB), I/O wait %
+
+    Boot Timeline – Current uptime as a color‑coded bar (green = fast, yellow = moderate, red = >30s)
+
+    Slowest Boot Services – from systemd-analyze blame
+
+    Active Errors – aggregated from journalctl -p 3
+
+All data is stored in a SQLite database (/var/lib/sys-inspector/sys-inspector.db) and served via a Flask API.
+🛠️ Installation (Manual)
+
+If you prefer not to use the install script:
+bash
+
+# Install dependencies
+sudo dnf install -y python3-flask sysstat jq nodejs npm chromium
+
+# Install Puppeteer globally (for headless verification)
+sudo npm install -g puppeteer
+
 # Clone the repository
-git clone https://github.com/yourusername/sys-inspector.git
+git clone https://github.com/your-username/sys-inspector.git
 cd sys-inspector
 
-# Install (copies to /usr/local, no symlinks to home)
-sudo ./scripts/install.sh
+# Copy files to system locations
+sudo mkdir -p /usr/local/share/sys-inspector/{dashboard,src/api}
+sudo cp dashboard/dashboard.html /usr/local/share/sys-inspector/dashboard/
+sudo cp src/api/api-server.py /usr/local/share/sys-inspector/src/api/
 
-# Open dashboard
-firefox http://127.0.0.1:8765/
+# Set up systemd service (optional)
+sudo cp sys-inspector-api.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now sys-inspector-api.service
 
-# Or use terminal TUI
-sys-inspector-tui
+# Open firewall (if needed)
+sudo firewall-cmd --add-port=8765/tcp --permanent
+sudo firewall-cmd --reload
 
-📊 What It Shows
-Dashboard Sections
-Section	What You'll See
-Database Stats	Record counts for all collected data
-Service States	static 326, disabled 159, enabled 62, alias 27, masked 25, indirect 16, generated 6, transient 2, enabled-runtime 1
-Active Errors	Real system errors (click for full context and suggested fixes)
-Boot Timeline	All 159+ boot services with durations (23s for disk, 4s for NetworkManager, etc.)
-Process Tree	Top 20 CPU consumers (Xorg, systemd, etc.)
-Network Connections	Active ESTABLISHED connections
-Listening Ports	Services listening for connections
-Terminal TUI
+🔍 Troubleshooting
+Dashboard shows “Loading…” forever
+
+    Check that the API is running:
+    bash
+
+    curl http://localhost:8765/api/ports
+
+    Should return a JSON array of ports. If it returns 404, the API server is not running or the endpoints are missing.
+
+    Restart the API with full logging:
+    bash
+
+    sudo systemctl restart sys-inspector-api.service
+    journalctl -u sys-inspector-api -n 50 --no-pager
+
+    Ensure the dashboard HTML is correct:
+    bash
+
+    grep -q '<script>' /usr/local/share/sys-inspector/dashboard/dashboard.html && echo "OK" || echo "MALFORMED"
+
+    If malformed, re‑copy the dashboard from the repository.
+
+    Verify the database is populated:
+    bash
+
+    sqlite3 /var/lib/sys-inspector/sys-inspector.db "SELECT COUNT(*) FROM listening_ports;"
+
+    Return value should be >0. If zero, run the collector manually:
+    bash
+
+    sudo /usr/local/share/sys-inspector/src/collectors/collect-all.sh
+
+Address already in use (port 8765)
+
+Kill the old process:
 bash
 
-sys-inspector-tui
-# Menu options:
-# 1 – Boot History (last 20 boots with times)
-# 2 – Service Audit (state counts)
-# 3 – Active Errors (click for details)
-# 4 – Database Statistics
-# 5 – Run Collectors
-# 6 – System Check
-
-🔧 Installation
-Prerequisites
-
-    Fedora Linux (or RHEL-based)
-
-    Python 3.14+
-
-    SQLite 3
-
-    systemd
-
-One-Command Install
-bash
-
-./scripts/install.sh
-
-This installs to /usr/local/share/sys-inspector (system-wide) with:
-
-    Systemd services for automatic collection
-
-    API server running on port 8765
-
-    TUI symlink at /usr/local/bin/sys-inspector-tui
-
-    Database at /var/lib/sys-inspector/sys-inspector.db
-
-    Logs at /var/log/sys-inspector/
-
-Development Install (Project Directory)
-bash
-
-# Edit files in project directory
-vim src/api/api-server.py
-vim dashboard/dashboard.html
-
-# Deploy to production (copies, not symlinks)
-./dev-deploy.sh
-
-📚 Usage Guide
-Dashboard Navigation
-
-    Open browser → http://127.0.0.1:8765/
-
-    Click any error row → Expands to show full message, related errors, and suggested fixes
-
-    Auto-refreshes every 30 seconds
-
-Running Collectors
-
-Collectors can run automatically (via systemd timers) or manually:
-bash
-
-# Manual run
-sudo /usr/local/share/sys-inspector/src/collectors/boot-health.sh
-sudo /usr/local/share/sys-inspector/src/collectors/contention-alert.sh
-sudo /usr/local/share/sys-inspector/src/collectors/service-manifest.sh
-sudo /usr/local/share/sys-inspector/src/collectors/process-collector.sh
-sudo /usr/local/share/sys-inspector/src/collectors/network-collector.sh
-
-# Automatic (systemd timers)
-systemctl list-timers | grep sys-inspector
-
-Database Queries
-bash
-
-# Total service manifest count
-sqlite3 /var/lib/sys-inspector/sys-inspector.db "SELECT COUNT(*) FROM service_manifest;"
-
-# Top 10 boot services by duration
-sqlite3 /var/lib/sys-inspector/sys-inspector.db "SELECT unit_name, duration_seconds FROM boot_timeline ORDER BY duration_seconds DESC LIMIT 10;"
-
-# Active errors with full messages
-sqlite3 /var/lib/sys-inspector/sys-inspector.db "SELECT timestamp, service, message FROM error_log WHERE resolved=0 LIMIT 10;"
-
-🐛 Troubleshooting
-Dashboard Shows "No Data"
-bash
-
-# Check API is running
-curl http://127.0.0.1:8765/api/stats
-
-# If not running, restart
+sudo lsof -ti :8765 | xargs kill -9
 sudo systemctl restart sys-inspector-api.service
 
-# Check logs
-sudo journalctl -u sys-inspector-api.service -n 20
+Puppeteer fails with “Cannot find module 'puppeteer'”
 
-Terminal Spam from Flask
-
-The API server runs silently via systemd. If you see:
-text
-
-127.0.0.1 - - [27/Apr/2026 18:11:32] "GET /api/services HTTP/1.1" 200 -
-
+Set NODE_PATH:
 bash
 
-# Make sure systemd service is running (not manual)
-sudo systemctl restart sys-inspector-api.service
+export NODE_PATH=$(npm root -g)
+node /path/to/your/script.js
 
-Collectors Not Running
+Headless browser test times out
+
+Use domcontentloaded instead of networkidle2:
+javascript
+
+await page.goto(url, { waitUntil: 'domcontentloaded' });
+
+Self‑healing timer overwrites your changes
+
+Disable it permanently:
 bash
 
-# Check timer status
-systemctl status sys-inspector-contention.timer
-systemctl status sys-inspector-manifest.timer
+sudo systemctl stop sys-inspector-selfheal.timer
+sudo systemctl disable sys-inspector-selfheal.timer
+sudo systemctl mask sys-inspector-selfheal.timer
 
-# Check service status
-systemctl status sys-inspector-boot.service
-systemctl status sys-inspector-shutdown.service
+📊 API Endpoints
+Endpoint	Description
+/	Dashboard HTML
+/api/ports	List of listening ports
+/api/connections	ESTABLISHED network connections
+/api/processes	Top 50 processes by CPU
+/api/services	Systemd service states
+/api/resources	Latest CPU, memory, I/O wait
+/api/boot/current	Current boot uptime in seconds
+/api/boot/slow-services	Slowest boot services (systemd-analyze)
+/api/errors	Aggregated error groups from journal
+/health	Health check (returns “OK”)
+🧪 Running the Self‑Verification
 
-Database Locked / Permission Denied
+The repository includes a verification script that uses Puppeteer to ensure the dashboard loads and shows real data:
 bash
 
-# Fix permissions
-sudo chmod 664 /var/lib/sys-inspector/sys-inspector.db
-sudo chown root:root /var/lib/sys-inspector/sys-inspector.db
+sudo bash -x scripts/verify.sh
 
-# If still locked, check for other processes
-sudo lsof /var/lib/sys-inspector/sys-inspector.db
+It will:
 
-API Endpoint 404 (Not Found)
-bash
+    Kill any existing API process
 
-# Verify API has all endpoints
-curl http://127.0.0.1:8765/api/stats
-curl http://127.0.0.1:8765/api/services
-curl http://127.0.0.1:8765/api/processes
-curl http://127.0.0.1:8765/api/connections
-curl http://127.0.0.1:8765/api/boot-timeline
+    Start a fresh API server
 
-# If missing, restore complete API server
-sudo cp /usr/local/share/sys-inspector/src/api/api-server.py.bak /usr/local/share/sys-inspector/src/api/api-server.py
-sudo systemctl restart sys-inspector-api.service
+    Run curl tests on all endpoints
 
-Desktop Alerts Flooding Screen
+    Launch a headless Chromium and wait for the connections panel to contain ESTAB
 
-The alerter has been removed. If you still see popups:
-bash
+    Exit with 0 on success, 1 on failure
 
-# Kill any remaining alert processes
-sudo pkill -f alerter
-sudo pkill -f notify-send
+🧬 RLM Compliance
 
-# Remove timer files
-sudo rm -f /etc/systemd/system/sys-inspector-alerter.*
-rm -f ~/.config/systemd/user/sys-inspector-alerter.*
+Sys‑Inspector follows RLM (Recursive Language Model) rules v6.12 – every command is logged with set -x, no output is hidden to /dev/null, and all fixes are idempotent. The ruleset is stored in ../.augment-rules-v6.12.json (outside the repo). Key principles:
 
-🧭 How We Got Here (RLM Methods)
+    Full logging – exec > >(tee -a $LOG_FILE) 2>&1; set -x
 
-This tool was developed using Recursive Layered Monitoring, where each layer validates the layer below before proceeding.
-The Problem
+    No curl -s -o /dev/null – always save and inspect the response body
 
-Initial versions of sys-inspector had:
+    No irrelevant endpoints – only test what the dashboard actually uses
 
-    No output visibility – users saw "[OK]" but no actual data
+    Headless browser verification – wait for DOM content, not just HTTP 200
 
-    Text selection broken – dialog boxes blocked copy/paste
+    Idempotent operations – ALTER TABLE ADD COLUMN with error ignoring, INSERT OR REPLACE
 
-    Collector failures – boot times showed 0.0s due to parsing errors
+    Kill old processes – lsof -ti :8765 | xargs kill -9
 
-    API endpoint gaps – missing /api/processes, /api/connections, /api/boot-timeline
+    Disable self‑healing timers – systemctl mask to prevent auto‑restore
 
-    Desktop alert floods – alerter sent notifications for every journal error
+📝 License
 
-    Path dependency issues – system symlinked to home directory, breaking uninstall
-
-The RLM Solution
-RLM Layer	Implementation	What It Fixed
-Layer 0	Directory validation	Ensures /var/lib/sys-inspector, /var/log/sys-inspector exist
-Layer 1	Binary verification	Checks sqlite3, python3, systemctl before install
-Layer 2	Table existence	Creates missing tables (resource_samples, error_log, boot_timeline)
-Layer 3	Schema validity	Adds missing columns (collected_at, full_message, stack_trace)
-Layer 3.5	Data validity	Flags zero-time boot records, stale manifests
-Layer 4	Collector execution	Captures ALL services (not just slowest), handles ms/s parsing
-Layer 5	API completeness	All endpoints: /api/processes, /api/connections, /api/boot-timeline, /api/error-context
-Layer 6	Dashboard transparency	Clickable error rows with full messages, related errors, suggested fixes
-Layer 7	Remediation	fix-errors-db.sh marks resolved errors, restarts failed services
-Layer 8	Clean separation	Production files in /usr/local, project files in ~/Documents, copy-based deployment
-Key Fixes Applied
-
-    Boot parser – Fixed to parse systemd-analyze time output correctly (kernel 853ms, initrd 6431ms, userspace 26993ms, total 34.3s)
-
-    Service manifest – Changed from collected_at to manifest_ts to match schema
-
-    Journal collector – Rewritten in Python to handle JSON parsing and data conversion
-
-    Error context – Added /api/error-context/<id> endpoint with related errors and journal timeline
-
-    Alerter – Removed due to desktop flooding; errors now only in dashboard
-
-    Path separation – No symlinks to home directory; clean uninstall possible
-
-📍 Current Status
-What Works
-Component	Status	Notes
-Boot timeline (159 services)	✅	All services with durations
-Service states (624 records)	✅	9 state categories
-Active errors	✅	Clickable, full context
-Process tree	✅	Top 20 by CPU
-Network connections	✅	Active ESTABLISHED connections
-Listening ports	✅	Shows open ports (none on client system)
-Resource samples	✅	CPU, memory, load averages
-Journal entries	✅	39,286 entries captured
-API server	✅	All 12 endpoints responding
-Dashboard	✅	All sections display correctly
-TUI	✅	Selectable, copyable text
-Systemd timers	✅	Automatic collection
-Uninstall	✅	Removes everything except project directory
-What's Not Missing (Intentionally)
-"Missing" Feature	Why It's Not There
-Listening ports	Your system has none – correct for client workstation
-Stack traces	No kernel oops occurred – infrastructure ready
-Desktop alerts	Removed – errors belong in dashboard, not popups
-System Health
-
-    Original errors: 537
-
-    Fixed: 529
-
-    Remaining: 8 (minor, non-critical)
-
-    Overall: CLEAN
-
-🚀 What Makes Sense Next
-Immediate Next Steps (For Users)
-
-    Review active errors – Click any error row in dashboard to see full context and suggested fixes
-
-    Monitor over time – Dashboard auto-refreshes every 30 seconds
-
-    Set up alerting (if desired) – Use /api/errors endpoint with external monitoring
-
-    Export data – All data is in SQLite at /var/lib/sys-inspector/sys-inspector.db
-
-Future Enhancements (For Contributors)
-
-    WebSocket real-time updates – Replace 30s polling with SSE/WebSocket
-
-    Service dependency graph – Visualize systemd-analyze dot
-
-    SELinux denial analysis – Parse ausearch output with audit2allow
-
-    Automated remediation – "Apply fix" button for common errors
-
-    Historical trends – Graphs over time for boot times, error frequency
-
-    Export formats – JSON, CSV, PDF reports
-
-    Mobile view – Responsive dashboard for phones
-
-Long-term Vision
-
-Sys-Inspector aims to be the single source of truth for system transparency – replacing scattered logs, systemd-analyze, journalctl, ps, ss, and dmesg with one unified, selectable, copyable interface.
-🗑️ Uninstall
-
-Complete removal (keeps your project directory):
-bash
-
-sudo /usr/local/share/sys-inspector/uninstall.sh
-
-This removes:
-
-    Systemd services (sys-inspector-*.service, *.timer)
-
-    Installed files (/usr/local/share/sys-inspector)
-
-    TUI symlink (/usr/local/bin/sys-inspector-tui)
-
-    Database (optional, asks confirmation)
-
-    Logs (optional, asks confirmation)
-
-Your project directory remains untouched – you can continue development.
+MIT – use freely, but keep the logging principle: never hide errors, always show the full output.
 🤝 Contributing
 
-See PLAN.json for architecture and CONTRIBUTING.md for guidelines.
-Development Workflow
-bash
+Pull requests must include a compliance audit in the description, showing that:
 
-# Edit files in project directory
-vim src/api/api-server.py
-vim dashboard/dashboard.html
+    All commands were run with set -x and logged
 
-# Deploy to production (copies, not symlinks)
-./dev-deploy.sh
+    No -o /dev/null or 2>/dev/null was used
 
-# Verify
-curl http://127.0.0.1:8765/api/stats
+    A headless browser test was performed
 
-Testing
-bash
+    The change is idempotent
 
-# Run RLM validation suite
-./verify-complete.sh
+📬 Support
 
-# Run regression tests
-./test-sys-inspector.sh
+Open an issue on GitHub. Please include the full log file from /var/log/sys-inspector/ – messy logs are welcome, clean logs are suspicious.
+README_EOF
+2. Stage and commit the updated README
 
-📄 License
+git add README.md
+git commit -m "docs: add comprehensive user guide with troubleshooting and RLM compliance notes"
+3. Push to remote (assumes origin/main)
 
-MIT License – See LICENSE
-🙏 Acknowledgments
-
-    RLM Methods – Zhang et al. (2026), arXiv:2512.24601v2
-
-    systemd – For making boot analysis possible
-
-    Flask – For lightweight API server
-
-    SQLite – For zero-configuration database
-
-📞 Support
-
-    Issues: GitHub Issues
-
-    Documentation: PLAN.json
-
-    Dashboard: http://127.0.0.1:8765/
-
-    TUI: sys-inspector-tui
-
-Built with RLM – Nothing Hidden. Everything Transparent.
+git push origin main
