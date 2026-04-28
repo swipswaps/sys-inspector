@@ -1,0 +1,3 @@
+[Service]
+ExecStart=/usr/local/share/sys-inspector/src/collectors/journald-collector.sh
+User=root

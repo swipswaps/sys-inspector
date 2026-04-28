@@ -52,13 +52,13 @@ declare -a RATIONALE=(
 )
 
 main() {
-    local manifest_ts
-    manifest_ts="$(date '+%Y-%m-%d %H:%M:%S')"
+    local collected_at
+    collected_at="$(date '+%Y-%m-%d %H:%M:%S')"
 
     if [[ -f "$SYSTEM_INSPECTOR_DB" ]]; then
         # Remove previous manifest entries
         sqlite3 "$SYSTEM_INSPECTOR_DB" \
-            "DELETE FROM service_manifest WHERE manifest_ts < '$manifest_ts';"
+            "DELETE FROM service_manifest WHERE collected_at < '$collected_at';"
 
         # Build associative array for O(1) rationale lookup
         declare -A RATIONALE_MAP
@@ -71,8 +71,8 @@ main() {
         while IFS=' ' read -r unit state preset; do
             local reason="${RATIONALE_MAP[$unit]:-No rationale recorded}"
             sqlite3 "$SYSTEM_INSPECTOR_DB" \
-                "INSERT INTO service_manifest (manifest_ts, unit_name, state, preset, rationale)
-                 VALUES ('$manifest_ts', '$unit', '$state', '$preset', '${reason//\'/\'\'}');" 2>/dev/null || true
+                "INSERT INTO service_manifest (collected_at, unit_name, state, preset, rationale)
+                 VALUES ('$collected_at', '$unit', '$state', '$preset', '${reason//\'/\'\'}');" 2>/dev/null || true
         done < <(systemctl list-unit-files --no-legend 2>/dev/null | awk '{print $1, $2, $3}')
     fi
 

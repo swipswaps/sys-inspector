@@ -1,0 +1,6 @@
+[Unit]
+Description=Network collector
+
+[Service]
+ExecStart=/usr/local/share/sys-inspector/src/collectors/network-collector.sh
+User=root

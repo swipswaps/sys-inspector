@@ -1,0 +1,6 @@
+[Unit]
+Description=Process tree collector
+
+[Service]
+ExecStart=/usr/local/share/sys-inspector/src/collectors/process-collector.sh
+User=root

@@ -1,82 +1,84 @@
 #!/usr/bin/env bash
-# contention-alert.sh — Sample system resources and alert on threshold breach
-# Trigger: systemd timer every 5 minutes
-# Self-healing: if DB missing, init it automatically
-# Citation: Gregg 2021, 'Systems Performance', ch.6 'CPU' p.208 —
-#   'CPU utilization should be measured as percent of one CPU and aggregated' [Tier 1]
+# contention-alert.sh — Resource sample collector (RLM fixed)
+
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+DB_PATH="${SYSTEM_INSPECTOR_DB:-/var/lib/sys-inspector/sys-inspector.db}"
+LOG_DIR="${LOG_DIR:-/var/log/sys-inspector}"
+LOG_FILE="$LOG_DIR/contention.log"
 
-# Source config with fallbacks for every variable
-if [[ -f "$REPO_ROOT/config/sys-inspector.conf" ]]; then
-    source "$REPO_ROOT/config/sys-inspector.conf"
-else
-    SYSTEM_INSPECTOR_DB="${SYSTEM_INSPECTOR_DB:-/var/lib/sys-inspector/sys-inspector.db}"
-    CPU_THRESHOLD_PCT=90; MEM_THRESHOLD_PCT=80; IOWAIT_THRESHOLD_PCT=50; ZOMBIE_THRESHOLD=5
-fi
+mkdir -p "$LOG_DIR"
 
-main() {
-    # Self-healing: ensure DB exists before writing
-    if [[ ! -f "$SYSTEM_INSPECTOR_DB" ]]; then
-        bash "$REPO_ROOT/src/db/db-init.sh" 2>/dev/null || true
-    fi
-
-    # --- Collect CPU metrics (mpstat preferred, /proc/loadavg fallback) ---
-    local cpu_pct
-    if command -v mpstat &>/dev/null; then
-        cpu_pct=$(mpstat 1 1 2>/dev/null | awk 'END{print 100 - $NF}' || echo "0")
-    else
-        local ncpu load1
-        ncpu=$(nproc)
-        load1=$(awk '{print $1}' /proc/loadavg)
-        cpu_pct=$(awk "BEGIN {printf \"%.1f\", ($load1 / $ncpu) * 100}")
-    fi
-
-    # --- Collect memory metrics ---
-    local mem_used mem_total mem_pct
-    mem_used=$(free -m | awk 'NR==2{print $3}')
-    mem_total=$(free -m | awk 'NR==2{print $2}')
-    mem_pct=$(awk "BEGIN {printf \"%.1f\", ($mem_used / $mem_total) * 100}")
-
-    # --- Collect I/O wait (iostat preferred, zero fallback) ---
-    local iowait_pct
-    if command -v iostat &>/dev/null; then
-        iowait_pct=$(iostat -c 1 2 2>/dev/null | awk 'END{print $4}' || echo "0")
-    else
-        iowait_pct="0.0"
-    fi
-
-    # --- Collect load averages and zombie count ---
-    local load1 load5 load15 zombie_ct
-    read -r load1 load5 load15 _ < /proc/loadavg
-    zombie_ct=$(ps -eo stat | awk '$1 ~ /Z/' | wc -l)
-
-    # --- Determine if any threshold is breached ---
-    local alert=0
-    (( $(awk "BEGIN {print ($cpu_pct > $CPU_THRESHOLD_PCT)}") )) && alert=1
-    (( $(awk "BEGIN {print ($mem_pct > $MEM_THRESHOLD_PCT)}") )) && alert=1
-    (( $(awk "BEGIN {print ($iowait_pct > $IOWAIT_THRESHOLD_PCT)}") )) && alert=1
-    (( zombie_ct > ZOMBIE_THRESHOLD )) && alert=1
-
-    # --- Persist sample to database ---
-    if [[ -f "$SYSTEM_INSPECTOR_DB" ]]; then
-        sqlite3 "$SYSTEM_INSPECTOR_DB" <<SQL
-INSERT INTO resource_samples
-    (cpu_pct, mem_used_mb, mem_total_mb, iowait_pct, load_1m, load_5m, load_15m, zombie_ct, alert_triggered)
-VALUES ($cpu_pct, $mem_used, $mem_total, $iowait_pct, $load1, $load5, $load15, $zombie_ct, $alert);
-SQL
-    fi
-
-    # --- Alert if threshold breached ---
-    if (( alert )); then
-        local msg="ALERT: CPU=${cpu_pct}% RAM=${mem_pct}% IOWait=${iowait_pct}% Zombies=${zombie_ct}"
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $msg" | systemd-cat -t sys-inspector -p warning
-        logger -t sys-inspector "$msg"
-        command -v notify-send &>/dev/null && \
-            DISPLAY=:0 notify-send "sys-inspector" "$msg" --icon=dialog-warning 2>/dev/null || true
-    fi
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
 }
 
-main "$@"
+log "=== RESOURCE SAMPLE START ==="
+
+# CPU stats from mpstat (if available)
+if command -v mpstat &>/dev/null; then
+    CPU_DATA=$(mpstat 1 1 | tail -1)
+    CPU_USER=$(echo "$CPU_DATA" | awk '{print $4}')
+    CPU_SYSTEM=$(echo "$CPU_DATA" | awk '{print $6}')
+    CPU_IDLE=$(echo "$CPU_DATA" | awk '{print $12}')
+    CPU_IOWAIT=$(echo "$CPU_DATA" | awk '{print $7}')
+else
+    # fallback using /proc/stat
+    read -r cpu line < /proc/stat
+    set -- $line
+    USER=$2; NICE=$3; SYSTEM=$4; IDLE=$5; IOWAIT=$6; IRQ=$7; SOFTIRQ=$8; STEAL=$9; GUEST=$10
+    TOTAL=$((USER+SYSTEM+IDLE+IOWAIT+IRQ+SOFTIRQ+STEAL))
+    CPU_USER=$((100 * USER / TOTAL))
+    CPU_SYSTEM=$((100 * SYSTEM / TOTAL))
+    CPU_IDLE=$((100 * IDLE / TOTAL))
+    CPU_IOWAIT=$((100 * IOWAIT / TOTAL))
+fi
+
+# Memory stats
+MEM_TOTAL=$(free -b | awk 'NR==2{print $2}')
+MEM_USED=$(free -b | awk 'NR==2{print $3}')
+MEM_FREE=$(free -b | awk 'NR==2{print $4}')
+MEM_CACHED=$(free -b | awk 'NR==2{print $7}')
+SWAP_USED=$(free -b | awk 'NR==3{print $3}')
+
+# Load averages
+LOAD=$(uptime | awk -F 'load average:' '{print $2}')
+LOAD_1MIN=$(echo "$LOAD" | awk -F',' '{print $1}')
+LOAD_5MIN=$(echo "$LOAD" | awk -F',' '{print $2}')
+LOAD_15MIN=$(echo "$LOAD" | awk -F',' '{print $3}')
+
+# Disk I/O (from iostat if available)
+if command -v iostat &>/dev/null; then
+    IOSTAT_DATA=$(iostat -d 1 1 | tail -1)
+    DISK_READ=$(echo "$IOSTAT_DATA" | awk '{print $3}')
+    DISK_WRITE=$(echo "$IOSTAT_DATA" | awk '{print $4}')
+else
+    DISK_READ=0
+    DISK_WRITE=0
+fi
+
+# Context switches & interrupts from /proc/stat
+read -r ctx line < /proc/stat
+CONTEXT_SWITCHES=$(grep ctxt /proc/stat | awk '{print $2}')
+INTERRUPTS=$(grep intr /proc/stat | awk '{print $2}')
+
+# Insert into database (fixed SQL – no trailing comma)
+sqlite3 "$DB_PATH" << EOF
+INSERT INTO resource_samples (
+    sampled_at, cpu_user, cpu_system, cpu_idle, cpu_iowait,
+    mem_total, mem_used, mem_free, mem_cached, swap_used,
+    load_1min, load_5min, load_15min,
+    disk_read_kb, disk_write_kb,
+    context_switches, interrupts
+) VALUES (
+    datetime('now'),
+    ${CPU_USER:-0}, ${CPU_SYSTEM:-0}, ${CPU_IDLE:-0}, ${CPU_IOWAIT:-0},
+    ${MEM_TOTAL:-0}, ${MEM_USED:-0}, ${MEM_FREE:-0}, ${MEM_CACHED:-0}, ${SWAP_USED:-0},
+    ${LOAD_1MIN:-0}, ${LOAD_5MIN:-0}, ${LOAD_15MIN:-0},
+    ${DISK_READ:-0}, ${DISK_WRITE:-0},
+    ${CONTEXT_SWITCHES:-0}, ${INTERRUPTS:-0}
+);
+EOF
+
+log "Resource sample inserted"
+log "=== RESOURCE SAMPLE COMPLETE ==="

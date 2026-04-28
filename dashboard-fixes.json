@@ -1,0 +1,119 @@
+{
+  "version": "2.0",
+  "rlm_compliance": {
+    "description": "Dashboard must show EVERY layer of system state, not just summaries"
+  },
+  
+  "boot_timeline": {
+    "required": true,
+    "current_issue": "Shows 0.0s for older boots",
+    "fix": "DELETE zero-time records from database",
+    "command": "sqlite3 /var/lib/sys-inspector/sys-inspector.db \"DELETE FROM boot_health WHERE total_ms = 0 OR total_ms IS NULL;\"",
+    "improvement": "Add detailed breakdown view:",
+    "new_section": {
+      "kernel_ms": "Time spent in kernel",
+      "initrd_ms": "Time in initramfs",
+      "userspace_ms": "Userspace startup",
+      "graphical_target_ms": "Time to graphical interface"
+    },
+    "api_fix": "Modify /api/boot to return component breakdown"
+  },
+
+  "active_errors": {
+    "required": true,
+    "current_issue": "Shows 'No active errors' but journal has 39,286 entries",
+    "root_cause": "error_log table never populated",
+    "fix": "Populate error_log from journald priority ≤ 3",
+    "command": "sudo sqlite3 /var/lib/sys-inspector/sys-inspector.db \"INSERT INTO error_log (timestamp, service, severity, message) SELECT recorded_at, syslog_identifier, CASE WHEN priority <= 2 THEN 'CRITICAL' WHEN priority = 3 THEN 'ERROR' ELSE 'WARNING' END, substr(message,1,500) FROM journal_entries WHERE priority <= 3 AND NOT EXISTS (SELECT 1 FROM error_log WHERE message = journal_entries.message LIMIT 1);\"",
+    "improvement": "Show last 20 errors with severity coloring"
+  },
+
+  "process_tree": {
+    "required": true,
+    "current_issue": "Not displayed at all",
+    "fix": "Add process table to dashboard",
+    "new_section": {
+      "title": "📈 Top Processes by CPU",
+      "columns": ["PID", "Name", "CPU %", "Memory %", "State"],
+      "query": "SELECT pid, name, cpu_percent, mem_percent, state FROM processes ORDER BY cpu_percent DESC LIMIT 20"
+    },
+    "api_endpoint": "/api/processes",
+    "command": "sqlite3 /var/lib/sys-inspector/sys-inspector.db \"SELECT pid, name, cpu_percent, mem_percent, state FROM processes ORDER BY cpu_percent DESC LIMIT 20;\""
+  },
+
+  "failed_services": {
+    "required": true,
+    "current_issue": "Service states show counts, not which services failed",
+    "fix": "Query systemctl for failed units",
+    "command": "systemctl list-units --state=failed --no-legend | awk '{print $1, $2, $3}'",
+    "new_section": {
+      "title": "⚠️ Failed System Services",
+      "query": "systemctl list-units --state=failed",
+      "fallback": "Check database for services with state != 'active'"
+    }
+  },
+
+  "security_events": {
+    "required": true,
+    "current_issue": "No SELinux or audit logs shown",
+    "fix": "Add SELinux denial collector",
+    "collector_script": "/usr/local/share/sys-inspector/src/collectors/selinux-collector.sh",
+    "new_section": {
+      "title": "🔒 Security Events (last 24h)",
+      "sources": ["SELinux denials", "Failed sudo attempts", "Failed logins"],
+      "commands": [
+        "ausearch -m avc -ts recent 2>/dev/null | head -20",
+        "journalctl -u sudo -p 3 --since '24 hours ago' | head -20",
+        "lastb | head -10"
+      ]
+    }
+  },
+
+  "network_insight": {
+    "required": true,
+    "current_issue": "Connections exist but not shown",
+    "fix": "Add listening ports and connections to dashboard",
+    "new_section": {
+      "title": "🌐 Listening Ports",
+      "data": "listening_ports table",
+      "api_endpoint": "/api/listening-ports"
+    },
+    "new_section_2": {
+      "title": "🔌 Active Connections",
+      "data": "network_connections table",
+      "api_endpoint": "/api/connections"
+    },
+    "commands": [
+      "sqlite3 /var/lib/sys-inspector/sys-inspector.db \"SELECT port, protocol FROM listening_ports ORDER BY port;\"",
+      "sqlite3 /var/lib/sys-inspector/sys-inspector.db \"SELECT local_addr, remote_addr, state, process FROM network_connections WHERE state='ESTAB' LIMIT 20;\""
+    ]
+  },
+
+  "resource_trends": {
+    "required": true,
+    "current_issue": "Shows only latest sample, no history",
+    "fix": "Add small chart of last 10 resource samples",
+    "new_section": {
+      "title": "📊 Resource History (last 10 samples)",
+      "query": "SELECT sampled_at, cpu_user, cpu_system, mem_used_percent FROM resource_samples ORDER BY id DESC LIMIT 10",
+      "display": "Simple bar chart or table"
+    }
+  },
+
+  "journal_context": {
+    "required": true,
+    "current_issue": "Dashboard shows no journal entries",
+    "fix": "Add recent journal entries widget",
+    "new_section": {
+      "title": "📰 Recent System Messages (last 50)",
+      "query": "SELECT datetime(recorded_at,'localtime') as ts, priority, syslog_identifier, substr(message,1,80) as msg FROM journal_entries ORDER BY recorded_at DESC LIMIT 50",
+      "severity_colors": {
+        "0": "🔴 EMERG",
+        "1": "🟠 ALERT",
+        "2": "🔴 CRIT",
+        "3": "🟡 ERROR",
+        "4": "🔵 WARNING"
+      }
+    }
+  }
+}

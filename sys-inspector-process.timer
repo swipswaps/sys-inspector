@@ -1,0 +1,8 @@
+[Unit]
+Description=Collect process tree every 5 minutes
+
+[Timer]
+OnCalendar=*:0/5
+
+[Install]
+WantedBy=timers.target

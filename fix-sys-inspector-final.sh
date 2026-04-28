@@ -1,3 +1,62 @@
+#!/bin/bash
+# RLM Complete Fix – Run as root or with sudo
+
+set -e
+
+echo "═══════════════════════════════════════════════════════════════"
+echo "  SYS-INSPECTOR FINAL REPAIR (RLM LAYERS 0-7)"
+echo "═══════════════════════════════════════════════════════════════"
+
+# 1. Install Flask globally (so root can use it)
+echo ""
+echo "[1/4] Installing Flask for system Python..."
+sudo pip3 install flask --break-system-packages 2>/dev/null || sudo pip3 install flask
+echo "  ✓ Flask installed"
+
+# 2. Fix systemd service with absolute paths
+echo ""
+echo "[2/4] Recreating systemd service..."
+sudo tee /etc/systemd/system/sys-inspector-api.service > /dev/null << 'EOF'
+[Unit]
+Description=Sys-Inspector API Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/owner/Documents/8aa812a2-06af-4313-81f8-bddfde353308/sys-inspector
+ExecStart=/usr/bin/python3 /home/owner/Documents/8aa812a2-06af-4313-81f8-bddfde353308/sys-inspector/src/api/api-server.py
+Restart=always
+RestartSec=5
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl restart sys-inspector-api.service
+sleep 2
+echo "  ✓ API service restarted"
+
+# 3. Verify API is responding
+echo ""
+echo "[3/4] Testing API endpoints..."
+if curl -s -f http://127.0.0.1:8765/api/stats > /dev/null; then
+    echo "  ✓ API is reachable"
+    curl -s http://127.0.0.1:8765/api/stats | python3 -m json.tool
+else
+    echo "  ✗ API not responding – check journal: sudo journalctl -u sys-inspector-api.service -n 20"
+    exit 1
+fi
+
+# 4. Replace TUI with terminal-native version (fully selectable)
+echo ""
+echo "[4/4] Installing terminal‑native TUI (no dialog, fully selectable)..."
+
+cat > /home/owner/Documents/8aa812a2-06af-4313-81f8-bddfde353308/sys-inspector/src/tui/sys-inspector-tui.sh << 'TUI_EOF'
 #!/usr/bin/env bash
 # sys-inspector-tui.sh — Terminal‑native UI – FULL TEXT SELECTION
 # No dialog, no whiptail – pure echo/read. All output selectable.
@@ -226,3 +285,19 @@ main() {
 }
 
 main "$@"
+TUI_EOF
+
+chmod +x /home/owner/Documents/8aa812a2-06af-4313-81f8-bddfde353308/sys-inspector/src/tui/sys-inspector-tui.sh
+sudo rm -f /usr/local/bin/sys-inspector-tui
+sudo ln -sf /home/owner/Documents/8aa812a2-06af-4313-81f8-bddfde353308/sys-inspector/src/tui/sys-inspector-tui.sh /usr/local/bin/sys-inspector-tui
+echo "  ✓ Terminal‑native TUI installed"
+
+echo ""
+echo "═══════════════════════════════════════════════════════════════"
+echo "  REPAIR COMPLETE"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+echo "  Dashboard:  http://127.0.0.1:8765/"
+echo "  TUI:        sys-inspector-tui    (fully selectable)"
+echo "  Quick TUI:  QUICK_MODE=1 sys-inspector-tui"
+echo ""
