@@ -1,0 +1,807 @@
+{
+  "schema_version": "6.12",
+  "metadata": {
+    "title": "Mandatory Rules for AI Assistant Interactions",
+    "version": "6.12",
+    "status": "Authoritative",
+    "scope": "Overrides all default assistant behavior",
+    "applies_to": "All reasoning, planning, execution, and output",
+    "self_contained": true,
+    "supersedes": [
+      ".augment-rules-v6.10.json (extended; all v6.10 fields included verbatim below)",
+      ".augment-rules-v6.11.json (rejected as authoritative; demoted to proposal status; audit recorded under v611_audit_resolution)"
+    ]
+  },
+  "v611_audit_resolution": {
+    "decision": "v6.11 was structurally a fix proposal, not a ruleset, and three of its five fixes were unsafe or technically incorrect. v6.12 keeps only the corrected pieces and re-anchors them in v6.10's schema. v6.11 is preserved on disk as historical proposal.",
+    "rejected_with_reason": {
+      "FIX-VSCODE-1_explicit_exit_0_and_wait": {
+        "verdict": "REJECTED",
+        "reason": "wait/exit 0 appended to a tee'd block is a no-op when no '&' children exist and bash already exits at end-of-input. The shell's last command is 'tee', which exits when its writers close; appending 'wait; exit 0' provides no additional reaping.",
+        "citation_problem": "Cited source 'github.com/microsoft/vscode/issues/123456' is a placeholder URL; fails Tier-4 requirements (real owner/file/lines/quote)."
+      },
+      "FIX-VSCODE-2_blanket_wait_false": {
+        "verdict": "REJECTED",
+        "reason": "Conflicts with v6.10 RULE 8/9 STEP 3 (read-back of log in same turn). The diagnostic premise (wait=true causes timeouts) is wrong; in session 71d427fe_0329 the heredoc-FREE bootstrap_inventory completed cleanly under wait=true (terminal 14859, return code 0), while the heredoc-via-tee emit_fix_list_compact hung (terminal 54508). The actual culprit is heredoc-via-tee, not wait=true.",
+        "citation_problem": "No source provided; rule change is asserted, not cited."
+      },
+      "FIX-VSCODE-4_kill_minus_9_cleanup": {
+        "verdict": "REJECTED - DANGEROUS",
+        "reason": "Three independent bugs: (a) ps aux field $10 is TIME (cumulative CPU MM:SS), not age; the comparison '$10 > 5' is undefined for that format. (b) SIGKILL on /bash|python3/ matches user shells, language servers, Augment's own helpers, and the running script itself; this is session-bricking. (c) Zombies (state Z, <defunct>) are dead processes whose parent has not called wait(2); they cannot be killed by any signal. The fix is to inform the operator which parent PID is leaking children.",
+        "citation_problem": "Cited 'systemd src/core/manager.c' lacks line numbers, verbatim quote, and blob URL; fails Tier-4 requirements."
+      }
+    },
+    "kept_with_corrections": {
+      "FIX-VSCODE-3_timeout_wrapper": {
+        "verdict": "KEPT WITH BUG FIX",
+        "v611_bug": "timeout 30s command || echo TIMEOUT triggers on ANY non-zero exit (e.g. grep with no matches exits 1 and would falsely log TIMEOUT).",
+        "v612_correction": "See rule_22_amendments_v612.pattern_corrected_timeout (distinguishes exit 124 from generic non-zero)."
+      },
+      "FIX-VSCODE-5_pre_command_count": {
+        "verdict": "KEPT WITH BUG FIX",
+        "v611_bug": "ps aux | grep -c bash | grep -v grep is structurally broken: grep -c emits a single integer line, and grep -v grep on an integer is a no-op; the count also includes the grep process itself.",
+        "v612_correction": "See rule_22_amendments_v612.pattern_corrected_proc_count (uses pgrep -c with anchored pattern)."
+      }
+    },
+    "added_root_cause": {
+      "id": "RC-VSCODE-4_heredoc_via_tee",
+      "claim": "Heredoc input piped through tee inside a { ... } | tee block leaves the writer-side of the pipe open in the PTY, blocking process exit until the tool call timeout fires.",
+      "evidence_pass": "Session 71d427fe_0329 terminal 14859 (bootstrap_inventory, heredoc-free) completed cleanly with return code 0.",
+      "evidence_fail": "Same session terminal 54508 (emit_fix_list_compact, python3 - <<'PY' inside tee'd block) hung; required manual kill-process; tool call cancelled due to timeout."
+    }
+  },
+  "rule_22_amendments_v612": {
+    "wait_parameter_clarification": {
+      "v610_text": "Default wait=true for short deterministic commands; wait=false reserved for long-running servers (per companion v6.7 MD).",
+      "v612_clarification": "Unchanged. wait=true remains default for short deterministic commands (<10s) whose output must be read in the same turn. wait=false is required only for: (a) long-running servers, (b) commands that would otherwise block on stdin, (c) recovery after a wait=true call hung. NEVER blanket-replace wait=true."
+    },
+    "heredoc_to_file_rule": {
+      "added_in": "6.12",
+      "binding": "MANDATORY",
+      "rule": "Heredoc input MUST be saved to a file under .augment/scripts/ before invocation. Do NOT embed <<EOF, <<'EOF', <<PY, or <<'PY' inside a { ... } | tee block or any subshell whose stdout is piped through tee.",
+      "rationale": "Heredoc + tee in a PTY can leave the writer-side of the pipe open, blocking process exit. Confirmed by paired evidence in session 71d427fe_0329 (terminal 14859 heredoc-free PASS vs terminal 54508 heredoc-via-tee HUNG).",
+      "correct_pattern": "STEP 1: save-file .augment/scripts/<name>.py with the script body. STEP 2: { echo START; python3 .augment/scripts/<name>.py 2>&1; echo END; } | tee \"$LOG\"",
+      "wrong_pattern": "{ echo START; python3 - <<'PY'\\n...\\nPY\\necho END; } | tee \"$LOG\""
+    },
+    "pattern_corrected_timeout": {
+      "added_in": "6.12",
+      "code": "timeout 30s <command> 2>&1; rc=$?; if [ \"$rc\" -eq 124 ]; then echo \"[TIMEOUT 30s] command did not complete\"; fi; exit $rc",
+      "wrong_code": "timeout 30s <command> 2>&1 || echo \"TIMEOUT after 30s\"",
+      "wrong_reason": "|| triggers on any non-zero exit, not only timeout (exit 124). grep with no matches (exit 1) would falsely log 'TIMEOUT'.",
+      "source": {
+        "type": "official_docs",
+        "name": "GNU coreutils timeout(1) man page",
+        "quote": "If the command times out, and --preserve-status is not set, then exit with status 124.",
+        "url": "https://www.gnu.org/software/coreutils/manual/html_node/timeout-invocation.html",
+        "tier": 2
+      }
+    },
+    "pattern_corrected_proc_count": {
+      "added_in": "6.12",
+      "code": "BASH_COUNT=$(pgrep -c '^bash$' || echo 0); if [ \"$BASH_COUNT\" -gt 16 ]; then echo \"[WARN] $BASH_COUNT bash processes (RULE 22 cap=16)\"; fi",
+      "wrong_code": "BASH_COUNT=$(ps aux | grep -c bash | grep -v grep)",
+      "wrong_reason": "grep -c emits a single integer line; the subsequent grep -v grep matches lines not containing 'grep', and an integer never contains 'grep', so the second filter is a no-op. The first count also includes the grep process itself.",
+      "source": {
+        "type": "official_docs",
+        "name": "Linux pgrep(1) man page",
+        "quote": "-c, --count   Suppress normal output; instead print a count of matching processes.",
+        "url": "https://man7.org/linux/man-pages/man1/pgrep.1.html",
+        "tier": 2
+      }
+    },
+    "pattern_zombie_diagnosis_only": {
+      "added_in": "6.12",
+      "binding": "DIAGNOSIS ONLY - do NOT signal processes from a watchdog",
+      "code": "ZCOUNT=$(ps -eo stat | awk '$1 ~ /Z/' | wc -l); ZPARENTS=$(ps -eo pid,ppid,stat,comm | awk '$3 ~ /Z/ {print $2}' | sort -u | tr '\\n' ' '); echo \"[ZOMBIE] count=$ZCOUNT parents=${ZPARENTS:-none}\"",
+      "rationale": "Zombies (<defunct>) are dead processes whose parent has not called wait(2). They cannot be killed by any signal. The correct response is to report which parent PID is leaking children so the operator can decide whether to restart that parent.",
+      "wrong_pattern_1": "kill -9 <zombie_pid>  (no effect; process already dead)",
+      "wrong_pattern_2": "kill -9 <random bash/python3 by name match>  (terminates user shells, language servers, IDE helpers)"
+    }
+  },
+  "forbidden_patterns_added_v612": {
+    "pattern_6_heredoc_via_tee": {
+      "added_in": "6.12",
+      "violation": "Embedding a heredoc inside a { ... } | tee block (or any subshell piped through tee).",
+      "wrong_example": "{ echo START; python3 - <<'PY'\\nimport json; ...\\nPY\\necho END; } | tee \"$LOG\"",
+      "correct_example": "save-file .augment/scripts/script.py THEN { echo START; python3 .augment/scripts/script.py 2>&1; echo END; } | tee \"$LOG\"",
+      "evidence": "Session 71d427fe_0329 terminal 54508 (killed; emit_fix_list_compact heredoc-via-tee). Heredoc-free terminal 14859 in same session returned cleanly with return code 0."
+    },
+    "pattern_7_ps_field_index_age": {
+      "added_in": "6.12",
+      "violation": "Using $10 from ps aux as process age.",
+      "wrong_example": "ps aux | awk '$10 > 5'   # $10 is TIME (cumulative CPU MM:SS), not age",
+      "correct_example": "ps -eo pid,etimes,comm | awk '$2 > 300'   # etimes = elapsed seconds since start",
+      "source": {
+        "type": "official_docs",
+        "name": "Linux ps(1) man page",
+        "quote": "etimes  elapsed time since the process was started, in seconds.",
+        "url": "https://man7.org/linux/man-pages/man1/ps.1.html",
+        "tier": 2
+      }
+    },
+    "pattern_8_blanket_sigkill": {
+      "added_in": "6.12",
+      "violation": "kill -9 against pattern matches like /bash|python3/.",
+      "risk": "Terminates user shells, language servers, IDE helpers, and the script itself if it forks. SIGKILL bypasses cleanup handlers.",
+      "correct_example": "Diagnose only: report parent PID of zombies; let operator restart parent. For runaway processes, use SIGTERM with grace period and a tightly scoped pgrep -f match the user has confirmed."
+    }
+  }
+  ,
+  "session_bootstrap_delta_v612": {
+    "inherits": "session_bootstrap (verbatim v6.10 copy below)",
+    "added_required_artifacts": [],
+    "removed_required_artifacts": [],
+    "do_not_add": [
+      ".augment/scripts/cleanup-zombies.sh (proposed in v6.11; rejected, see v611_audit_resolution.rejected_with_reason.FIX-VSCODE-4_kill_minus_9_cleanup)"
+    ],
+    "diagnostic_only_optional": [
+      ".augment/scripts/zombie-probe.sh (implements pattern_zombie_diagnosis_only; informational, no signals sent)"
+    ]
+  },
+  "compliance_audit_format_delta_v612": {
+    "inherits": "compliance_audit_format (verbatim v6.10 copy below)",
+    "added_field": {
+      "heredoc_safety": {
+        "format": "PASS / N/A",
+        "explanation": "PASS if no heredoc was embedded inside a tee'd block or tee'd subshell this turn; N/A if no commands were run."
+      }
+    }
+  },
+  "_inherited_from_v610_marker": "All keys below this marker are inherited verbatim from .augment-rules-v6.10.json (schema_version 6.10) and remain authoritative under v6.12.",
+  "changes_v610_over_v69": {
+    "rlm_enforcement_integration": {
+      "added": true,
+      "description": "RLM-based compliance gate treats rules as external environment",
+      "mechanism": "Rules JSON loaded as environment variable, decomposed recursively for validation",
+      "source": {
+        "type": "academic_paper",
+        "paper": "Recursive Language Models (arXiv:2512.24601v2)",
+        "authors": "Alex L. Zhang, Tim Kraska, Omar Khattab",
+        "institution": "MIT CSAIL",
+        "date": "January 29, 2026",
+        "quote": "The key insight is that arbitrarily long user prompts should not be fed into the neural network directly but should instead be treated as part of the environment that the LLM is tasked to symbolically and recursively interact with.",
+        "url": "https://arxiv.org/abs/2512.24601",
+        "explanation": "RLM paradigm applied to rules enforcement: instead of requiring LLM to hold all rules in context, rules JSON becomes external environment. Compliance gate programmatically examines, decomposes, and validates against rules file. This prevents context overflow and ensures deterministic rule checking."
+      },
+      "implementation": {
+        "file": ".augment/scripts/pre-execution-rules-check.sh",
+        "pattern": "Loads mandatory-rules-v6.10.json as ENV variable -> Decomposes action into rule-verification subroutines -> Validates symbolically -> BLOCKS if ANY rule violated",
+        "evidence": "Commit d7ffae9 'feat: Implement RLM-based compliance gate (arXiv:2512.24601)' shows working implementation"
+      }
+    },
+    "json_md_alignment_verification": {
+      "added": true,
+      "description": "Cross-format verification ensures MD and JSON contain identical enforcement logic",
+      "mechanism": "COMPLIANCE AUDIT includes JSON-MD alignment field",
+      "requirement": "Every pattern in MD must have matching JSON schema entry with complete source citations"
+    },
+    "explicit_source_tiers": {
+      "added": true,
+      "description": "Every citation labeled as Tier 1/2/3/4 per hierarchy",
+      "tiers": {
+        "tier_1": {
+          "name": "Books and Academic Papers",
+          "priority": "Highest authority",
+          "format": "Author, Year. 'Title.' Publisher/Institution. ChapterN p.NNN or Section",
+          "example": "Zhang et al. 2026. 'Recursive Language Models.' MIT CSAIL. arXiv:2512.24601v2"
+        },
+        "tier_2": {
+          "name": "Official Documentation",
+          "priority": "Second highest",
+          "sources": ["Linux man pages", "Docker/Kubernetes docs", "GitHub docs"],
+          "required": ["Direct URL", "Verbatim quote", "Section reference"]
+        },
+        "tier_3": {
+          "name": "Reputable Forum Posts",
+          "priority": "Third",
+          "sources": ["Stack Overflow 500+ votes", "Unix Stack Exchange", "Server Fault"],
+          "required": ["Platform", "Question ID", "Vote count", "Answer ID", "URL"]
+        },
+        "tier_4": {
+          "name": "Production Code Repositories",
+          "priority": "Fourth",
+          "sources": ["GitHub repos with 5k+ stars", "Core infrastructure code"],
+          "required": ["Repo owner/name", "Star count", "File path", "Line numbers", "Blob URL"]
+        }
+      }
+    },
+    "structural_consistency": {
+      "added": true,
+      "description": "Pattern numbering, step sequences, enforcement gates match between JSON and MD exactly",
+      "verification": "Automated diff check between JSON patterns and MD sections"
+    }
+  },
+  "changes_v69_over_v68": {
+    "enforcement_gate": {
+      "added": true,
+      "description": "Blocks response emission without log file evidence",
+      "mechanism": "PRE-DELIVERY GATE runs before COMPLIANCE AUDIT",
+      "source": {
+        "type": "official_docs",
+        "name": "GitHub Actions required status checks",
+        "quote": "Required status checks ensure that all required CI tests are passing before collaborators can make changes to a protected branch",
+        "url": "https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/about-status-checks",
+        "explanation": "Just as GitHub blocks PR merges until CI passes, v6.9 blocks response emission until log file steps pass. The status check pattern (visible, binary, blocking) maps directly to the PRE-DELIVERY GATE."
+      }
+    },
+    "structural_blocker": {
+      "added": true,
+      "description": "Makes evasion structurally impossible",
+      "mechanism": "5-step gate with binary pass/fail per step",
+      "source": {
+        "type": "production_code",
+        "repo": "kubernetes/kubernetes",
+        "stars": "109k",
+        "file": "staging/src/k8s.io/apiserver/pkg/admission/chain.go",
+        "lines": "89-107",
+        "quote": "// Admit makes an admission decision based on the request attributes.\n// The chain is processed in order, and if any handler returns an error,\n// processing stops and the error is returned.",
+        "url": "https://github.com/kubernetes/kubernetes/blob/master/staging/src/k8s.io/apiserver/pkg/admission/chain.go#L89-L107",
+        "explanation": "Kubernetes admission controllers form a chain where each step must pass before proceeding. If any step fails, the entire request is blocked. This is the same pattern as PRE-DELIVERY GATE: 5 steps, serial execution, fail-fast blocking."
+      }
+    },
+    "source_citations": {
+      "added": true,
+      "description": "Every pattern must cite official docs/repos",
+      "requirement": "All enforcement patterns include source type, URL, vote count (if forum), star count (if repo)",
+      "source": {
+        "type": "reputable_forum",
+        "platform": "Stack Overflow",
+        "question_id": "1732348",
+        "votes": "6847",
+        "quote": "When answering questions, cite your sources. If you found something online, link to it. If you learned it from a book, name the book. If you discovered it through experimentation, explain what you tried.",
+        "url": "https://stackoverflow.com/a/1732454/1234567",
+        "explanation": "High-quality technical writing requires citations. Stack Overflow's highest-voted answer on 'How to write a good answer' emphasizes sourcing. v6.9 applies this to rule documentation: every pattern cites where it comes from."
+      }
+    },
+    "conditional_language_removed": {
+      "removed": ["if truncated", "when needed", "as required"],
+      "replaced_with": "UNCONDITIONAL, MANDATORY, ZERO EXCEPTIONS",
+      "source": {
+        "type": "official_docs",
+        "name": "Kubernetes logging architecture",
+        "quote": "System component logs should always be directed to the stdout and stderr streams. Do not write directly to files.",
+        "url": "https://kubernetes.io/docs/concepts/cluster-administration/logging/",
+        "explanation": "Kubernetes doesn't say 'log to stdout if the output might be important' - it says ALWAYS. The word 'always' removes escape hatches. v6.9 applies this: not 'log if truncated' but 'ALL commands MUST log'."
+      }
+    },
+    "step_numbers_explicit": {
+      "added": true,
+      "description": "Makes skipping steps visible",
+      "format": "STEP 1, STEP 2, STEP 3, STEP 4, STEP 5",
+      "source": {
+        "type": "production_code",
+        "repo": "docker/compose",
+        "stars": "33.1k",
+        "file": "cmd/compose/up.go",
+        "lines": "86-132",
+        "quote": "// Step 1: Build or pull images\n// Step 2: Create containers\n// Step 3: Start containers\n// Step 4: Attach to containers",
+        "url": "https://github.com/docker/compose/blob/main/cmd/compose/up.go#L86-L132",
+        "explanation": "Docker Compose up command has explicit numbered steps visible in code comments. If Step 2 fails, you know exactly which step broke. v6.9 applies this: numbered steps make violations precise and debuggable."
+      }
+    },
+    "binary_checklist": {
+      "added": true,
+      "description": "Checklist items are PASS/FAIL with no partial credit",
+      "previous": "Checklist existed but no enforcement of binary state",
+      "source": {
+        "type": "official_docs",
+        "name": "GitHub Actions workflow status",
+        "quote": "Each job in a workflow has a status of success, failure, or cancelled. There is no 'partially successful' state.",
+        "url": "https://docs.github.com/en/actions/monitoring-and-troubleshooting-workflows/using-workflow-run-logs#viewing-logs-to-diagnose-failures",
+        "explanation": "GitHub Actions jobs are binary: green check or red X. No yellow 'mostly passed'. This prevents ambiguity. v6.9 applies this to RULE 8/9 checklist: every item is PASS or FAIL, no 'partially complied'."
+      }
+    }
+  },
+  "rlm_based_compliance_enforcement": {
+    "paradigm": "Recursive Language Model for rule validation",
+    "paper_source": {
+      "type": "academic_paper",
+      "arxiv_id": "2512.24601v2",
+      "title": "Recursive Language Models",
+      "authors": ["Alex L. Zhang", "Tim Kraska", "Omar Khattab"],
+      "institution": "MIT CSAIL",
+      "date": "2026-01-29",
+      "url": "https://arxiv.org/abs/2512.24601"
+    },
+    "core_principle": {
+      "quote_from_paper": "The key insight is that arbitrarily long user prompts should not be fed into the neural network (e.g., Transformer) directly but should instead be treated as part of the environment that the LLM is tasked to symbolically and recursively interact with.",
+      "application_to_rules": "Rules JSON is not embedded in LLM context. Instead, it exists as external environment variable that compliance gate examines programmatically.",
+      "benefits": [
+        "No context window overflow from large rulesets",
+        "Deterministic validation (symbolic, not probabilistic)",
+        "Explicit blocking mechanism (not soft suggestions)",
+        "Traceable rule violations (specific rule ID + evidence)"
+      ]
+    },
+    "implementation_pattern": {
+      "file": ".augment/scripts/pre-execution-rules-check.sh",
+      "workflow": [
+        "LOAD: Rules environment from /home/owner/.augment/rules/mandatory-rules-v6.10.json",
+        "DECOMPOSE: Action (push/commit/deploy) into constituent validation checks",
+        "VALIDATE: Each check against specific rule ID symbolically",
+        "BLOCK: If ANY rule violated, prevent execution with explicit reason",
+        "REPORT: Violations with rule ID, reason, and fix suggestion"
+      ],
+      "example_output": {
+        "action": "push",
+        "violations": [
+          {
+            "rule_id": "LV-1",
+            "name": "No Push Without Local Execution",
+            "status": "VIOLATION",
+            "reason": "No local test evidence found",
+            "fix": "Run local tests and commit evidence before push"
+          },
+          {
+            "rule_id": "22",
+            "name": "Terminal Hygiene",
+            "status": "WARNING",
+            "reason": "16 terminals active (threshold: 5)",
+            "fix": "Close unused terminals"
+          }
+        ],
+        "gate_result": "BLOCKED",
+        "message": "Fix violations above before proceeding"
+      }
+    },
+    "verified_by": {
+      "commit": "d7ffae9",
+      "message": "feat: Implement RLM-based compliance gate (arXiv:2512.24601)",
+      "evidence": "Commit shows working implementation blocking push on RULE LV-1 violation"
+    }
+  },
+  "session_bootstrap": {
+    "priority": "RUNS BEFORE ALL OTHER RULES",
+    "frequency": "EVERY SESSION",
+    "required_artifacts": [
+      ".augment/scripts/terminal-watchdog.sh",
+      ".augment/scripts/pre-response-check.sh",
+      ".augment/scripts/pre-stop-watchdog.sh",
+      ".augment/scripts/pre-execution-rules-check.sh",
+      ".notes/ (directory)"
+    ],
+    "pattern": {
+      "step_1": {
+        "description": "Main command with logging",
+        "code": "LOG=\".notes/terminal-$(date +%Y%m%d-%H%M%S).log\"\n{\n  echo \"START: action\"\n  command 2>&1\n  sleep 6\n  echo \"END: action\"\n} | tee \"$LOG\"",
+        "source": {
+          "type": "official_docs",
+          "name": "Linux tee(1) man page",
+          "quote": "tee - read from standard input and write to standard output and files",
+          "url": "https://man7.org/linux/man-pages/man1/tee.1.html",
+          "explanation": "The tee command copies stdin to both stdout (visible terminal) and files (persistent log). This dual-capture pattern is fundamental to UNIX logging. Man page documents this as the standard way to preserve terminal output."
+        }
+      },
+      "step_2": {
+        "description": "Watchdog in separate launch-process call",
+        "code": ".augment/scripts/terminal-watchdog.sh",
+        "source": {
+          "type": "production_code",
+          "repo": "brendangregg/perf-tools",
+          "stars": "9800",
+          "file": "bin/execsnoop",
+          "lines": "89-93",
+          "quote": "LOG=\"/tmp/execsnoop.$$\"\n{\n  echo \"START: trace\"\n  dtrace -qn \"$script\" 2>&1\n  echo \"END: trace\"\n} | tee \"$LOG\"",
+          "url": "https://github.com/brendangregg/perf-tools/blob/master/bin/execsnoop#L89-L93",
+          "explanation": "Brendan Gregg's perf-tools (industry-standard Linux performance analysis) uses this exact pattern: START/END markers with tee logging. This code has been battle-tested on millions of production systems."
+        }
+      },
+      "step_3": {
+        "description": "RLM-based compliance gate check before state-advancing actions",
+        "code": ".augment/scripts/pre-execution-rules-check.sh <action> <context>",
+        "when": "Before push, deploy, or any state-advancing Git operation",
+        "source": {
+          "type": "academic_paper",
+          "paper": "arXiv:2512.24601v2",
+          "quote": "RLM treats input as external environment and writes code to peek into, decompose, and iteratively observe side effects from execution",
+          "explanation": "Compliance gate treats rules JSON as environment, decomposes action into validation steps, blocks if violations detected"
+        }
+      }
+    }
+  },
+  "structural_blocker_enforcement_gate": {
+    "type": "PRE-DELIVERY GATE",
+    "runs": "BEFORE compliance audit",
+    "blocking": "PHYSICAL - emission impossible until pass",
+    "steps": {
+      "step_1": {
+        "question": "Did I run a bash command this session?",
+        "yes": "Continue to STEP 2",
+        "no": "Skip to delivery",
+        "rationale": "If no commands run, terminal protocol doesn't apply"
+      },
+      "step_2": {
+        "question": "Does command include | tee .notes/terminal-*.log ?",
+        "yes": "Continue to STEP 3",
+        "no": "BLOCK: Add | tee to command and re-run",
+        "source": {
+          "type": "reputable_forum",
+          "platform": "Stack Overflow",
+          "question_id": "692000",
+          "votes": "627",
+          "quote": "command 2>&1 | tee output.log",
+          "url": "https://stackoverflow.com/questions/692000/how-do-i-write-stderr-to-a-file-while-using-tee-with-a-pipe",
+          "explanation": "This is the accepted answer (627 upvotes) for 'How do I write stderr to a file while using tee?'. The pattern 2>&1 | tee captures both stdout and stderr to file. This is the standard UNIX pattern for dual-capture logging."
+        }
+      },
+      "step_3": {
+        "question": "Did I run: view $(ls -t .notes/terminal-*.log | head -1) ?",
+        "yes": "Continue to STEP 4",
+        "no": "BLOCK: Read log file now before proceeding",
+        "source": {
+          "type": "official_docs",
+          "name": "Docker container logging",
+          "quote": "By default, docker logs or docker service logs shows the command's output just as it would appear if you ran the command interactively in a terminal.",
+          "url": "https://docs.docker.com/config/containers/logging/",
+          "explanation": "Docker's logging philosophy: captured logs must be readable and complete. 'docker logs' reads the persistent log, not just live output. v6.9 applies this: view command reads the persistent .notes/*.log file, not just <output> section."
+        }
+      },
+      "step_4": {
+        "question": "Did I quote output FROM THE LOG FILE (not <output>)?",
+        "yes": "Continue to STEP 5",
+        "no": "BLOCK: Quote log file content before proceeding",
+        "source": {
+          "type": "official_docs",
+          "name": "Kubernetes logging best practices",
+          "quote": "Container logs should be written to stdout and stderr. The container runtime captures this output and writes it to a file",
+          "url": "https://kubernetes.io/docs/concepts/cluster-administration/logging/",
+          "explanation": "Kubernetes logging pattern: application writes to stdout/stderr, runtime captures to file, debugging reads from file. This is the authoritative source for cloud-native logging. v6.9 applies this: quote from the CAPTURED FILE, not the transient stream."
+        }
+      },
+      "step_5": {
+        "question": "Is RULE 8/9 COMPLIANCE checklist visible in response?",
+        "yes": "PASS - Proceed to COMPLIANCE AUDIT",
+        "no": "BLOCK: Add checklist before proceeding",
+        "source": {
+          "type": "official_docs",
+          "name": "GitHub Actions workflow run logs",
+          "quote": "Status checks let you know if your commits meet the conditions set for the repository you're contributing to",
+          "url": "https://docs.github.com/en/actions/monitoring-and-troubleshooting-workflows/using-workflow-run-logs",
+          "explanation": "GitHub shows green checkmarks or red X's visibly in the PR interface. You don't have to click into logs to see if CI passed. v6.9 applies this visibility principle: checklist must be visible in the response itself, not hidden."
+        }
+      }
+    }
+  },
+  "rule_8_9_terminal_protocol": {
+    "priority": "MANDATORY - ZERO EXCEPTIONS",
+    "steps": {
+      "step_1": {
+        "name": "Create log file variable",
+        "code": "LOG=\".notes/terminal-$(date +%Y%m%d-%H%M%S).log\"",
+        "explanation": "Timestamp in filename prevents collisions across multiple commands",
+        "source": {
+          "type": "production_code",
+          "repo": "systemd/systemd",
+          "stars": "13k",
+          "file": "src/basic/time-util.c",
+          "lines": "468-485",
+          "quote": "FORMAT_TIMESTAMP uses YYYYMMDD-HHMMSS for unique, sortable timestamps",
+          "url": "https://github.com/systemd/systemd/blob/main/src/basic/time-util.c#L468-L485",
+          "explanation": "systemd (Linux init system used by billions of systems) uses YYYYMMDD-HHMMSS format for log timestamps. This format is sortable and collision-resistant. v6.9 uses the same pattern."
+        }
+      },
+      "step_2": {
+        "name": "Run command with logging",
+        "code": "{\n  echo \"START: action_description\"\n  actual_command 2>&1\n  sleep 6\n  echo \"END: action_description\"\n} | tee \"$LOG\"",
+        "explanation": "Curly braces group commands, 2>&1 captures stderr, tee duplicates to file and terminal",
+        "source": {
+          "type": "reputable_forum",
+          "platform": "Stack Overflow",
+          "question_id": "692000",
+          "votes": "627",
+          "answer_id": "692407",
+          "quote": "The 2>&1 is used to redirect the error stream to the output stream. tee then writes the combined stream to the file",
+          "url": "https://stackoverflow.com/a/692407/",
+          "explanation": "This is the definitive Stack Overflow answer for stderr capture with tee. 627 upvotes confirms it's the standard pattern. The explanation clarifies WHY 2>&1 comes before tee: it merges streams before duplication."
+        }
+      },
+      "step_3": {
+        "name": "Read the log file",
+        "code": "view $(ls -t .notes/terminal-*.log | head -1)",
+        "explanation": "ls -t sorts by time (newest first), head -1 gets most recent",
+        "source": {
+          "type": "official_docs",
+          "name": "GNU Coreutils ls(1) man page",
+          "quote": "-t sort by modification time, newest first",
+          "url": "https://man7.org/linux/man-pages/man1/ls.1.html",
+          "explanation": "The -t flag is documented in ls man page as time-based sorting. Combined with head -1, this idiom 'get most recent file' is a standard UNIX pattern. Appears in countless production scripts."
+        }
+      },
+      "step_4": {
+        "name": "Quote output from log file",
+        "in_response": true,
+        "not_in_command": true,
+        "explanation": "Human-readable output in response body, quoted from log file content"
+      },
+      "step_5": {
+        "name": "Include compliance checklist",
+        "in_response": true,
+        "format": "RULE 8/9 COMPLIANCE:\nPASS/FAIL STEP 1: ...\nPASS/FAIL STEP 2: ...",
+        "explanation": "Binary checklist (PASS or FAIL) makes violations visible to user"
+      }
+    }
+  },
+  "forbidden_patterns": {
+    "pattern_1_truncation_claim": {
+      "violation": "Claiming 'output got cut off' without reading log file",
+      "session_id": "71d427fe-4c8d-4498-ab8c-4ac6bd55d99d_0322.txt",
+      "wrong_example": "$ grep -n \"190\" file.txt\nThe output got cut off on the first run...",
+      "correct_example": "$ LOG=\".notes/terminal-$(date +%Y%m%d-%H%M%S).log\"\n{\n  echo \"START: search\"\n  grep -n \"190\" file.txt 2>&1\n  sleep 6\n  echo \"END: search\"\n} | tee \"$LOG\"\n$ view $(ls -t .notes/terminal-*.log | head -1)",
+      "source": {
+        "type": "official_docs",
+        "name": "Linux tee(1) man page",
+        "quote": "Copy standard input to each FILE, and also to standard output",
+        "url": "https://man7.org/linux/man-pages/man1/tee.1.html",
+        "explanation": "The tee man page documents that tee COPIES to files - it doesn't truncate. If output appears truncated in terminal, the COMPLETE output still exists in the tee'd file. Therefore 'truncation' is never an excuse to skip reading the log file."
+      }
+    },
+    "pattern_2_retry_without_logging": {
+      "violation": "Retrying command without logging first attempt",
+      "session_id": "71d427fe-4c8d-4498-ab8c-4ac6bd55d99d_0322.txt",
+      "user_quote": "that means you are not reading terminals",
+      "wrong_example": "[command fails] -> [immediately retry without logging first attempt]",
+      "correct_example": "First attempt MUST log:\n$ LOG=\".notes/terminal-$(date +%Y%m%d-%H%M%S).log\"\n{ echo \"START: attempt1\"; command 2>&1; sleep 6; echo \"END: attempt1\"; } | tee \"$LOG\"\n\nThen MUST read:\n$ view .notes/terminal-TIMESTAMP.log\n\nThen if retry:\n$ LOG=\".notes/terminal-$(date +%Y%m%d-%H%M%S).log\"\n{ echo \"START: attempt2\"; command 2>&1; sleep 6; echo \"END: attempt2\"; } | tee \"$LOG\"",
+      "source": {
+        "type": "production_code",
+        "repo": "git/git",
+        "stars": "51k",
+        "file": "t/test-lib-functions.sh",
+        "lines": "1084-1099",
+        "quote": "test_expect_success 'test logs are preserved even on failure' '{\n    failing_command &&\n    test -f test-results/test-*.log\n}'",
+        "url": "https://github.com/git/git/blob/master/t/test-lib-functions.sh#L1084-L1099",
+        "explanation": "Git's test suite (51k stars, most popular VCS) REQUIRES that logs are preserved even when tests fail. The test explicitly checks that log files exist after failure. This is the gold standard: ALWAYS log, ESPECIALLY on failure, because failure logs are the most valuable for debugging."
+      }
+    },
+    "pattern_3_conditional_logging": {
+      "violation": "Using 'if truncated' creates escape hatch",
+      "v6_7_text": "if `<output>` is empty OR contains [Truncated], use view...",
+      "problem": "Assistant can skip logging by claiming output wasn't truncated",
+      "v6_9_fix": "ALL commands MUST log. No 'if'. No 'when'. No conditions.",
+      "source": {
+        "type": "official_docs",
+        "name": "Kubernetes logging architecture",
+        "quote": "System component logs should always be directed to the stdout and stderr streams",
+        "url": "https://kubernetes.io/docs/concepts/cluster-administration/logging/#logging-at-the-node-level",
+        "explanation": "Kubernetes doesn't say 'log to stdout IF output might be truncated'. It says ALWAYS log to stdout. The word 'always' removes conditionals. v6.9 applies this principle: logging is UNCONDITIONAL, not conditional on truncation detection."
+      }
+    },
+    "pattern_4_output_section_without_log": {
+      "violation": "Reading <output> section but not log file",
+      "wrong_example": "Tool result <output> shows:\n[quotes from <output>]\n[proceeds with analysis]",
+      "correct_example": "Tool result received.\nReading log file:\n$ view $(ls -t .notes/terminal-*.log | head -1)\n\nLog file shows:\n[quotes from LOG FILE]\n\nRULE 8/9 COMPLIANCE:\nPASS Read log file\nPASS Quoted from log (not <output>)",
+      "source": {
+        "type": "official_docs",
+        "name": "Docker logging configuration",
+        "quote": "By default, docker logs shows the command's output. However, you can also configure the logging driver to write to a file",
+        "url": "https://docs.docker.com/config/containers/logging/configure/",
+        "explanation": "Docker distinguishes between 'docker logs' (ephemeral stream) and logging drivers that write to files (persistent). The official docs recommend file-based logging for production. v6.9 applies this: <output> is ephemeral stream, log file is persistent - ALWAYS read the persistent version."
+      }
+    },
+    "pattern_5_missing_checklist": {
+      "violation": "No compliance checklist visible to user",
+      "wrong_example": "[Runs command]\n[Proceeds with analysis]\n[No checklist shown]",
+      "correct_example": "[Runs command]\n[Reads log file]\n[Shows checklist]\nRULE 8/9 COMPLIANCE:\nPASS All 5 steps completed\n[Then proceeds]",
+      "source": {
+        "type": "official_docs",
+        "name": "GitHub Actions status checks",
+        "quote": "Required status checks ensure that all required CI tests are passing before collaborators can make changes",
+        "url": "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/defining-the-mergeability-of-pull-requests/about-protected-branches#require-status-checks-before-merging",
+        "explanation": "GitHub shows CI status checks VISIBLY in the PR interface - green checkmarks or red X's. You don't click into logs to see if tests passed. The checks are ALWAYS visible. v6.9 applies this: compliance checklist must be VISIBLE in every response, not hidden or inferred."
+      }
+    }
+  },
+  "compliance_audit_format": {
+    "required_fields": {
+      "rules_applied": {
+        "format": "List of rule numbers (e.g., '0, 8, 9, 22')",
+        "explanation": "Shows which rules were relevant to this response"
+      },
+      "evidence_provided": {
+        "format": "YES / NO / N/A",
+        "explanation": "YES if claims are backed by verbatim output/logs, NO if unsubstantiated, N/A if no claims made"
+      },
+      "violations_detected": {
+        "format": "YES / NO",
+        "explanation": "YES if response violates any rule, NO if clean"
+      },
+      "emission_gate_passed": {
+        "format": "YES / NO",
+        "explanation": "YES if all RULE 0 checks pass, NO if blocked"
+      },
+      "partial_compliance": {
+        "format": "YES / NO",
+        "explanation": "YES if task incomplete, NO if fully complied or N/A"
+      },
+      "task_complete": {
+        "format": "YES / NO",
+        "explanation": "YES if user request 100% satisfied, NO if partial/in-progress"
+      },
+      "pre_delivery_gate": {
+        "format": "PASS / BLOCKED / N/A",
+        "explanation": "PASS if all 5 gate steps completed, BLOCKED if any failed, N/A if no commands run",
+        "added_in": "v6.9"
+      },
+      "rule_8_9_checklist": {
+        "format": "ALL PASS / FAIL [list which failed]",
+        "explanation": "ALL PASS if all 5 checklist items passed, FAIL with specific failures listed",
+        "added_in": "v6.9"
+      },
+      "json_md_alignment": {
+        "format": "VERIFIED / MISMATCH",
+        "explanation": "VERIFIED if every pattern in MD has matching JSON entry with complete sources, MISMATCH if citations missing",
+        "added_in": "v6.10"
+      },
+      "rlm_gate_status": {
+        "format": "PASS / BLOCKED / N/A",
+        "explanation": "PASS if pre-execution-rules-check.sh passed, BLOCKED if violations, N/A if not applicable to action",
+        "added_in": "v6.10"
+      },
+      "heredoc_safety": {
+        "format": "PASS / N/A",
+        "explanation": "PASS if no heredoc was embedded inside a tee'd block or tee'd subshell this turn; N/A if no commands were run",
+        "added_in": "v6.12"
+      }
+    },
+    "blocking_conditions": {
+      "rule_8_9_any_failed": {
+        "condition": "If RULE 8/9 checklist shows ANY FAIL",
+        "action": "Response is BLOCKED - fix violation before delivery"
+      },
+      "pre_delivery_gate_blocked": {
+        "condition": "If PRE-DELIVERY GATE shows BLOCKED",
+        "action": "Response is BLOCKED - complete missing steps, re-run audit showing PASS"
+      },
+      "json_md_mismatch": {
+        "condition": "If JSON-MD alignment shows MISMATCH",
+        "action": "Citation missing from MD that exists in JSON - re-add citation from JSON schema",
+        "added_in": "v6.10"
+      },
+      "rlm_gate_blocked": {
+        "condition": "If RLM gate status shows BLOCKED",
+        "action": "Fix rule violations reported by pre-execution-rules-check.sh before proceeding",
+        "added_in": "v6.10"
+      },
+      "heredoc_via_tee_used": {
+        "condition": "If heredoc_safety shows FAIL (heredoc embedded in a tee'd block)",
+        "action": "Response is BLOCKED - rewrite to save the script body to .augment/scripts/<name>.{py,sh} and invoke the file. See rule_22_amendments_v612.heredoc_to_file_rule.",
+        "added_in": "v6.12"
+      }
+    }
+  },
+  "source_citation_requirements": {
+    "tier_hierarchy": {
+      "tier_1_books_and_papers": {
+        "priority": "Highest authority",
+        "format": "Author, Year. 'Title.' Publisher/Institution. ChapterN p.NNN or Section",
+        "required_elements": ["Author(s)", "Year", "Title", "Publisher or Institution", "Specific section reference"],
+        "example": {
+          "source": "Zhang et al. 2026. 'Recursive Language Models.' MIT CSAIL. arXiv:2512.24601v2",
+          "quote": "The key insight is that arbitrarily long user prompts should not be fed into the neural network directly but should instead be treated as part of the environment",
+          "url": "https://arxiv.org/abs/2512.24601",
+          "explanation": "RLM paradigm forms the theoretical basis for treating rules JSON as external environment rather than embedding in context"
+        }
+      },
+      "tier_2_official_documentation": {
+        "priority": "Second highest",
+        "required_elements": [
+          "Direct URL to specific section",
+          "Verbatim quote from documentation",
+          "Explanation of how pattern applies"
+        ],
+        "accepted_sources": [
+          "Linux man pages (man7.org)",
+          "Docker docs (docker.com)",
+          "Kubernetes docs (kubernetes.io)",
+          "GitHub docs (docs.github.com)"
+        ],
+        "example": {
+          "source": "Linux tee(1) man page",
+          "quote": "Copy standard input to each FILE, and also to standard output",
+          "url": "https://man7.org/linux/man-pages/man1/tee.1.html",
+          "explanation": "The tee command's documented behavior - copying to both file and stdout - is the foundation of the dual-capture logging pattern in RULE 8/9."
+        }
+      },
+      "tier_3_reputable_forum_posts": {
+        "priority": "Third",
+        "required_elements": [
+          "Platform name", "Question ID", "Vote count (minimum 500)",
+          "Answer ID if multiple answers", "Verbatim quote", "Direct URL"
+        ],
+        "accepted_platforms": ["Stack Overflow", "Unix & Linux Stack Exchange", "Server Fault"],
+        "example": {
+          "platform": "Stack Overflow",
+          "question_id": "692000",
+          "votes": "627",
+          "quote": "command 2>&1 | tee output.log",
+          "url": "https://stackoverflow.com/questions/692000/how-do-i-write-stderr-to-a-file-while-using-tee-with-a-pipe",
+          "explanation": "This 627-upvote answer is the canonical Stack Overflow reference for stderr capture with tee. The pattern 2>&1 | tee is used in RULE 8/9 STEP 2."
+        }
+      },
+      "tier_4_production_code_repositories": {
+        "priority": "Fourth",
+        "required_elements": [
+          "Repository owner/name", "Star count (minimum 5k)", "File path",
+          "Line numbers", "Verbatim code quote", "Direct GitHub blob URL"
+        ],
+        "accepted_repositories": [
+          "Repositories with 5k+ stars",
+          "Core infrastructure (git, systemd, kubernetes, docker)",
+          "Industry-standard tools (brendangregg/perf-tools, etc.)"
+        ],
+        "example": {
+          "repo": "brendangregg/perf-tools",
+          "stars": "9800",
+          "file": "bin/execsnoop",
+          "lines": "89-93",
+          "quote": "LOG=\"/tmp/execsnoop.$$\"\n{\n  echo \"START: trace\"\n  dtrace -qn \"$script\" 2>&1\n  echo \"END: trace\"\n} | tee \"$LOG\"",
+          "url": "https://github.com/brendangregg/perf-tools/blob/master/bin/execsnoop#L89-L93",
+          "explanation": "Brendan Gregg's perf-tools (industry-standard Linux performance tracing) uses the exact START/END/tee pattern mandated in RULE 8/9. This code has run on millions of production systems."
+        }
+      }
+    }
+  },
+  "version_history": {
+    "v6_12": {
+      "supersedes": ["6.11 (demoted to proposal)", "6.10 (extended verbatim)"],
+      "changes": [
+        "v6.11 audit resolution recorded under v611_audit_resolution (rejected: FIX-VSCODE-1, FIX-VSCODE-2, FIX-VSCODE-4; kept with corrections: FIX-VSCODE-3, FIX-VSCODE-5)",
+        "Added rule_22_amendments_v612.heredoc_to_file_rule (MANDATORY) - identifies heredoc-via-tee as the actual root cause of session 71d427fe_0329 timeouts",
+        "Added pattern_corrected_timeout (distinguishes exit 124 from generic non-zero, cited GNU coreutils timeout(1))",
+        "Added pattern_corrected_proc_count (pgrep -c with anchored pattern, cited Linux pgrep(1))",
+        "Added pattern_zombie_diagnosis_only (DIAGNOSIS ONLY - does NOT signal processes; documents why SIGKILL on zombies is futile)",
+        "Added forbidden_patterns 6/7/8 (heredoc-via-tee, ps $10 as age, blanket SIGKILL)",
+        "Added compliance_audit_format.required_fields.heredoc_safety (PASS / N/A)",
+        "Added compliance_audit_format.blocking_conditions.heredoc_via_tee_used (BLOCKED if heredoc embedded in tee'd block)",
+        "All v6.10 sections inherited verbatim below the _inherited_from_v610_marker key"
+      ],
+      "evidence_chain": {
+        "heredoc_via_tee_root_cause": {
+          "pass_evidence": "Session 71d427fe_0329 terminal 14859 - heredoc-FREE bootstrap_inventory under wait=true completed cleanly with return code 0",
+          "fail_evidence": "Same session terminal 54508 - heredoc-via-tee emit_fix_list_compact under wait=true HUNG; required manual kill-process; tool call cancelled due to timeout",
+          "conclusion": "wait=true is NOT the cause (refutes v6.11 FIX-VSCODE-2). The heredoc piped through tee is the cause. Therefore v6.12 mandates save-file-then-execute pattern instead of blanket wait=false."
+        }
+      }
+    },
+    "v6_11": {
+      "status": "Demoted from authoritative to proposal-only. See v611_audit_resolution.",
+      "kept_pieces_with_corrections": ["FIX-VSCODE-3 (timeout wrapper, exit-code 124 fix)", "FIX-VSCODE-5 (pre-command count, pgrep -c fix)"],
+      "rejected_pieces": ["FIX-VSCODE-1 (no-op wait/exit 0)", "FIX-VSCODE-2 (blanket wait=false)", "FIX-VSCODE-4 (kill -9 on bash/python by name)", "augment_rules_updates RULE 22 wait=false blanket"]
+    },
+    "v6_10": {
+      "changes": [
+        "RLM-based compliance gate integration (arXiv:2512.24601v2)",
+        "Complete JSON-MD alignment verification",
+        "Explicit source tier hierarchy (Tier 1: Books/Papers highest)",
+        "Cross-format verification in COMPLIANCE AUDIT",
+        "Added pre-execution-rules-check.sh to session bootstrap"
+      ],
+      "paper_source": "Zhang et al. 2026. 'Recursive Language Models.' MIT CSAIL. arXiv:2512.24601v2"
+    },
+    "v6_9": {
+      "changes": [
+        "Structural enforcement gate",
+        "Source citations for all patterns",
+        "Removed all conditional language",
+        "Binary checklist (no partial credit)",
+        "PRE-DELIVERY GATE blocking mechanism"
+      ]
+    },
+    "v6_8": {
+      "changes": [
+        "Mandatory checklist visibility",
+        "Unconditional logging requirement",
+        "Removed 'if truncated' escape hatch"
+      ]
+    },
+    "v6_7": {
+      "changes": [
+        "Session bootstrap protocol",
+        "Terminal hygiene rules",
+        "Watchdog scripts requirement"
+      ]
+    },
+    "v6_6": {
+      "status": "Baseline version"
+    }
+  }
+}
